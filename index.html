@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>STS · Live translation</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#f6f4ee;color:#18362f;margin:0;padding:8vw;max-width:800px}
+h1{font-size:clamp(32px,7vw,60px)}button{background:#18362f;color:white;border:0;border-radius:12px;padding:18px 24px;font-size:18px}
+#text{font-size:24px;line-height:1.6;white-space:pre-wrap}
+</style>
+<h1>Listen in English</h1>
+<p>Live translation of the service. Use headphones.</p>
+<button id="start">Listen live</button>
+<p id="status" role="status">Ready</p>
+<p id="text" aria-live="polite"></p>
+<script>
+const button = document.querySelector('#start');
+const status = document.querySelector('#status');
+const transcript = document.querySelector('#text');
+let context, socket, nextTime = 0;
+button.onclick = async () => {
+  if (socket) { socket.close(); return; }
+  context = new AudioContext();
+  await context.resume();
+  button.disabled = true;
+  socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/listen');
+  socket.onopen = () => { button.disabled = false; button.textContent = 'Stop listening'; };
+  socket.onmessage = ({data}) => {
+    const event = JSON.parse(data);
+    if (event.type === 'status') status.textContent = event.message;
+    if (event.type === 'session.output_transcript.delta')
+      transcript.textContent = (transcript.textContent + event.delta).slice(-6000);
+    if (event.type === 'session.output_audio.delta') {
+      const bytes = Uint8Array.from(atob(event.delta), c => c.charCodeAt(0));
+      const view = new DataView(bytes.buffer);
+      const buffer = context.createBuffer(1, bytes.length / 2, 24000);
+      const samples = buffer.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(context.destination);
+      if (nextTime > context.currentTime + 5) {
+        status.textContent = 'Audio delayed. Stop and reconnect to return live.';
+        return;
+      }
+      nextTime = Math.max(nextTime, context.currentTime + 0.08);
+      source.start(nextTime);
+      nextTime += buffer.duration;
+    }
+  };
+  socket.onclose = () => {
+    socket = null; context.close(); nextTime = 0;
+    button.disabled = false; button.textContent = 'Listen live';
+    status.textContent = 'Disconnected';
+  };
+  socket.onerror = () => { status.textContent = 'Connection failed'; };
+};
+</script>
+</html>
