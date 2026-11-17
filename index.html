@@ -10,6 +10,8 @@ h1{font-size:clamp(32px,7vw,60px)}button{background:#18362f;color:white;border:0
 </style>
 <h1>Listen in English</h1>
 <p>Live translation of the service. Use headphones.</p>
+<label for="server">Translation server</label>
+<input id="server" type="url" placeholder="wss://your-server.example/listen" style="display:block;box-sizing:border-box;width:100%;padding:14px;margin:12px 0 20px;font-size:16px;border:1px solid #9aaa9e;border-radius:8px">
 <button id="start">Listen live</button>
 <p id="status" role="status">Ready</p>
 <p id="text" aria-live="polite"></p>
@@ -17,13 +19,28 @@ h1{font-size:clamp(32px,7vw,60px)}button{background:#18362f;color:white;border:0
 const button = document.querySelector('#start');
 const status = document.querySelector('#status');
 const transcript = document.querySelector('#text');
+const server = document.querySelector('#server');
+const suppliedServer = new URLSearchParams(location.search).get('server');
+server.value = suppliedServer || (location.hostname.endsWith('.vercel.app') ? '' :
+  (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/listen');
 let context, socket, nextTime = 0;
 button.onclick = async () => {
   if (socket) { socket.close(); return; }
+  let endpoint;
+  try {
+    endpoint = new URL(server.value);
+    if (!['ws:', 'wss:'].includes(endpoint.protocol)) throw new Error('Use a ws:// or wss:// address.');
+    if (location.protocol === 'https:' && endpoint.protocol !== 'wss:') throw new Error('This page requires a secure wss:// server.');
+    if (endpoint.username || endpoint.password) throw new Error('Use a server address without embedded credentials.');
+  } catch (error) {
+    status.textContent = error.message || 'Enter a valid translation server address.';
+    return;
+  }
   context = new AudioContext();
   await context.resume();
   button.disabled = true;
-  socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/listen');
+  socket = new WebSocket(endpoint.href);
+  server.disabled = true;
   socket.onopen = () => { button.disabled = false; button.textContent = 'Stop listening'; };
   socket.onmessage = ({data}) => {
     const event = JSON.parse(data);
@@ -50,6 +67,7 @@ button.onclick = async () => {
   };
   socket.onclose = () => {
     socket = null; context.close(); nextTime = 0;
+    server.disabled = false;
     button.disabled = false; button.textContent = 'Listen live';
     status.textContent = 'Disconnected';
   };
